@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,8 +47,7 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Network
         private readonly ClientStateSingleton _clientStateSingleton = ClientStateSingleton.Instance;
         private readonly SyncedServerSettings _serverSettings = SyncedServerSettings.Instance;
         private readonly ConnectedClientsSingleton _clients = ConnectedClientsSingleton.Instance;
-
-
+        
         private DCSRadioSyncManager _radioDCSSync = null;
         private LotATCSyncHandler _lotATCSync;
 
@@ -80,6 +80,7 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Network
         }
 
 
+        [MethodImpl(MethodImplOptions.Synchronized)]
         public void TryConnect(IPEndPoint endpoint, ConnectCallback callback)
         {
             _callback = callback;
@@ -127,6 +128,7 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Network
             CallExternalAWACSModeOnMain(false, 0);
         }
 
+        [MethodImpl(MethodImplOptions.Synchronized)]
         private void Connect()
         {
             _lastSent = DateTime.Now.Ticks;
@@ -190,9 +192,9 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Network
                 }
             }
 
-            _radioDCSSync.Stop();
-            _lotATCSync.Stop();
-            _vaicomSync.Stop();
+            _radioDCSSync?.Stop();
+            _lotATCSync?.Stop();
+            _vaicomSync?.Stop();
             _idleTimeout?.Stop();
 
             //disconnect callback
@@ -606,8 +608,25 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Network
 
             _lastSent = DateTime.Now.Ticks;
             _idleTimeout?.Stop();
-
+            
             DisconnectExternalAWACSMode();
+            
+            if (_radioDCSSync != null)
+            {
+                _radioDCSSync.Stop();
+                _radioDCSSync = null;
+            }
+            if (_lotATCSync != null)
+            {
+                _lotATCSync.Stop();
+                _lotATCSync = null;
+            }
+
+            if (_vaicomSync != null)
+            {
+                _vaicomSync.Stop();
+                _vaicomSync = null;
+            }
 
             try
             {

@@ -1,4 +1,4 @@
--- Version 2.0.7.1
+-- Version 2.0.8.6
 -- ONLY COPY THIS WHOLE FILE IS YOU ARE GOING TO HOST A SERVER!
 -- The file must be in Saved Games\DCS\Scripts\Hooks or Saved Games\DCS.openalpha\Scripts\Hooks
 -- Make sure you enter the correct address into SERVER_SRS_HOST and SERVER_SRS_PORT (5002 by default) below.
@@ -9,9 +9,9 @@
 -- User options --
 local SRSAuto = {}
 
-SRSAuto.SERVER_SRS_HOST_AUTO = false -- if set to true SRS will set the SERVER_SRS_HOST for you! - Currently disabled
+SRSAuto.SERVER_SRS_HOST_AUTO = false -- if set to true SRS will set the SERVER_SRS_HOST for you!
 SRSAuto.SERVER_SRS_PORT = "5002" --  SRS Server default is 5002 TCP & UDP
-SRSAuto.SERVER_SRS_HOST = "127.0.0.1" -- overridden if SRS_HOST_AUTO is true -- set to your PUBLIC ipv4 address
+SRSAuto.SERVER_SRS_HOST = "127.0.0.1" -- overridden if SRS_HOST_AUTO is true -- set to your PUBLIC ipv4 address or domain srs.example.com
 SRSAuto.SERVER_SEND_AUTO_CONNECT = true -- set to false to disable auto connect or just remove this file 
 
 ---- SRS CHAT COMMANDS ----
@@ -119,15 +119,25 @@ end
 local _lastSent = 0
 
 SRSAuto.onMissionLoadBegin = function()
+	local _status, _result = pcall( function()
+		if SRSAuto.SERVER_SRS_HOST_AUTO then
+			local ipLookupUrl = "https://ipv4.icanhazip.com"
+			local T, code, headers, status = socket.http.request(ipLookupUrl)
 
-	if SRSAuto.SERVER_SRS_HOST_AUTO then
-		local T, code, headers, status = socket.http.request("https://ipv4.icanhazip.com")
-		SRSAuto.SERVER_SRS_HOST = T
-		SRSAuto.log("SET IP automatically to "..SRSAuto.SERVER_SRS_HOST)
+			if T == nil or code == nil or code < 200 or code >= 300 then
+			   if code == nil then code = "??" end
+			   SRSAuto.log("Failed to lookup IP from "..ipLookupUrl..". Http Status: " .. code)
+			else
+				SRSAuto.SERVER_SRS_HOST = T
+				SRSAuto.log("SET IP automatically to "..SRSAuto.SERVER_SRS_HOST)
+			end
+		end
+	end)
+	
+	if not _status then
+		SRSAuto.log('ERROR: ' .. _result)
 	end
-
 end
-
 
 SRSAuto.onSimulationFrame = function()
 

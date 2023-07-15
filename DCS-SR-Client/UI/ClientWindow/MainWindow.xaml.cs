@@ -9,6 +9,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -901,6 +902,7 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.UI
             HFEffectVolume.IsEnabled = true;
         }
 
+        [MethodImpl(MethodImplOptions.Synchronized)]
         private void Connect()
         {
             if (ClientState.IsConnected)
@@ -922,49 +924,66 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.UI
                         _resolvedIp = ip;
                         _port = GetPortFromTextBox();
 
-                        _client = new SRSClientSyncHandler(_guid, UpdateUICallback, delegate (string name, int seat)
+                        try
                         {
-                            try
+                            _client?.Disconnect();
+                        }
+                        catch (Exception ex)
+                        {
+                        }
+
+                        if (_client == null)
+                        {
+                            _client = new SRSClientSyncHandler(_guid, UpdateUICallback, delegate(string name, int seat)
                             {
-                                //on MAIN thread
-                                Application.Current.Dispatcher.Invoke(DispatcherPriority.Background,
-                                    new ThreadStart(() =>
-                                    {
-                                        //Handle Aircraft Name - find matching profile and select if you can
-                                        name = Regex.Replace(name.Trim().ToLower(), "[^a-zA-Z0-9]", "");
-                                        //add one to seat so seat_2 is copilot
-                                        var nameSeat = $"_{seat+1}";
-
-                                        foreach (var profileName in _globalSettings.ProfileSettingsStore.ProfileNames)
+                                try
+                                {
+                                    //on MAIN thread
+                                    Application.Current.Dispatcher.Invoke(DispatcherPriority.Background,
+                                        new ThreadStart(() =>
                                         {
-                                            //find matching seat
-                                            var splitName = profileName.Trim().ToLowerInvariant().Split('_').First();
-                                            if (name.StartsWith(Regex.Replace(splitName, "[^a-zA-Z0-9]", "")) && profileName.Trim().EndsWith(nameSeat))
+                                            //Handle Aircraft Name - find matching profile and select if you can
+                                            name = Regex.Replace(name.Trim().ToLower(), "[^a-zA-Z0-9]", "");
+                                            //add one to seat so seat_2 is copilot
+                                            var nameSeat = $"_{seat + 1}";
+
+                                            foreach (var profileName in _globalSettings.ProfileSettingsStore
+                                                         .ProfileNames)
                                             {
-                                                ControlsProfile.SelectedItem = profileName;
-                                                return;
+                                                //find matching seat
+                                                var splitName = profileName.Trim().ToLowerInvariant().Split('_')
+                                                    .First();
+                                                if (name.StartsWith(Regex.Replace(splitName, "[^a-zA-Z0-9]", "")) &&
+                                                    profileName.Trim().EndsWith(nameSeat))
+                                                {
+                                                    ControlsProfile.SelectedItem = profileName;
+                                                    return;
+                                                }
                                             }
-                                        }
 
-                                        foreach (var profileName in _globalSettings.ProfileSettingsStore.ProfileNames)
-                                        {
-                                            //find matching seat
-                                            if (name.StartsWith(Regex.Replace(profileName.Trim().ToLower(), "[^a-zA-Z0-9_]", "")))
+                                            foreach (var profileName in _globalSettings.ProfileSettingsStore
+                                                         .ProfileNames)
                                             {
-                                                ControlsProfile.SelectedItem = profileName;
-                                                return;
+                                                //find matching seat
+                                                if (name.StartsWith(Regex.Replace(profileName.Trim().ToLower(),
+                                                        "[^a-zA-Z0-9_]", "")))
+                                                {
+                                                    ControlsProfile.SelectedItem = profileName;
+                                                    return;
+                                                }
                                             }
-                                        }
 
-                                        ControlsProfile.SelectedIndex = 0;
+                                            ControlsProfile.SelectedIndex = 0;
 
-                                    }));
-                            }
-                            catch (Exception)
-                            {
-                            }
+                                        }));
+                                }
+                                catch (Exception)
+                                {
+                                }
 
-                        });
+                            });
+                        }
+
                         _client.TryConnect(new IPEndPoint(_resolvedIp, _port), ConnectCallback);
 
                         StartStop.Content = "Connecting...";
@@ -1073,11 +1092,7 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.UI
             {
             }
 
-            if (_client != null)
-            {
-                _client.Disconnect();
-                _client = null;
-            }
+            _client?.Disconnect();
 
             ClientState.DcsPlayerRadioInfo.Reset();
             ClientState.PlayerCoaltionLocationMetadata.Reset();
@@ -1474,8 +1489,13 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.UI
                     catch (Exception e)
                     {
                         Logger.Warn(e, $"Failed to resolve current SRS host {currentConnectionParts[0]} to IP addresses, ignoring autoconnect advertisement");
-                        return;
                     }
+                }
+
+                if (currentIPs.Count == 0)
+                {
+                    Logger.Warn( $"Failed to resolve current SRS host {currentConnectionParts[0]} to IP addresses, ignoring autoconnect advertisement");
+                    return;
                 }
 
                 List<string> advertisedIPs = new List<string>();

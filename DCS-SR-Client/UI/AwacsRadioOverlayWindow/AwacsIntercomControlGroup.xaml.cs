@@ -1,4 +1,5 @@
-﻿using System.Windows;
+﻿using System;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Ciribob.DCS.SimpleRadio.Standalone.Client.Network;
@@ -169,10 +170,17 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.UI.AwacsRadioOverlayWindow
             if ((dcsPlayerRadioInfo != null) && dcsPlayerRadioInfo.IsCurrent() &&
                 (dcsPlayerRadioInfo.unitId >= DCSPlayerRadioInfo.UnitIdOffset))
             {
-                _clientStateSingleton.IntercomOffset = (int) IntercomNumberSpinner.Value;
-                dcsPlayerRadioInfo.unitId =
-                    (uint) (DCSPlayerRadioInfo.UnitIdOffset + _clientStateSingleton.IntercomOffset);
-                _clientStateSingleton.LastSent = 0; //force refresh
+                try
+                {
+                    _clientStateSingleton.IntercomOffset = (int)IntercomNumberSpinner.Value;
+                    dcsPlayerRadioInfo.unitId =
+                        (uint)(DCSPlayerRadioInfo.UnitIdOffset + _clientStateSingleton.IntercomOffset);
+                    _clientStateSingleton.LastSent = 0; //force refresh
+                }
+                catch (Exception)
+                {
+                    //ignore 
+                }
             }
         }
     }

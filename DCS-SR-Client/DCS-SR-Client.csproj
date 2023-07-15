@@ -248,11 +248,13 @@
     <Compile Include="Audio\Providers\ClientAudioProvider.cs" />
     <Compile Include="Audio\Providers\ClientEffectsPipeline.cs" />
     <Compile Include="Audio\Providers\RadioMixingProvider.cs" />
+    <Compile Include="Audio\Recording\AudioRecordingLameWriter.cs" />
     <Compile Include="Audio\Recording\AudioRecordingManager.cs" />
     <Compile Include="Audio\Recording\AudioRecordingSample.cs" />
+    <Compile Include="Audio\Recording\AudioRecordingStreamHydrated.cs" />
+    <Compile Include="Audio\Recording\AudioRecordingStream.cs" />
+    <Compile Include="Audio\Recording\AudioRecordingStreamMixer.cs" />
     <Compile Include="Audio\Recording\TransmissionAssembler.cs" />
-    <Compile Include="Audio\Recording\MixDownLameRecordingWriter.cs" />
-    <Compile Include="Audio\Recording\PerRadioLameRecordingWriter.cs" />
     <Compile Include="Audio\Models\TransmittedAudio.cs" />
     <Compile Include="Audio\Providers\AudioProvider.cs" />
     <Compile Include="Audio\Models\CachedAudioEffect.cs" />
@@ -271,7 +273,6 @@
     <Compile Include="Input\XInputController.cs" />
     <Compile Include="Network\VAICOM\Models\VAICOMMessageWrapper.cs" />
     <Compile Include="Network\VAICOM\VAICOMSyncHandler.cs" />
-    <Compile Include="Audio\Recording\AudioRecordingLameWriterBase.cs" />
     <Compile Include="Audio\Recording\ClientTransmissionBuffer.cs" />
     <Compile Include="Settings\ProfileSettingsStore.cs" />
     <Compile Include="Input\InputBindState.cs" />

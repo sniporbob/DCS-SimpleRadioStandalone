@@ -87,11 +87,14 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Settings.RadioChannels
 
             foreach (var fileAndPath in files)
             {
-                var name = Path.GetFileNameWithoutExtension(fileAndPath);
-
-                if (NormaliseString(name) == radioName)
+                if (Path.GetExtension(fileAndPath).ToLowerInvariant() == ".txt")
                 {
-                    return fileAndPath;
+                    var name = Path.GetFileNameWithoutExtension(fileAndPath);
+
+                    if (NormaliseString(name) == radioName)
+                    {
+                        return fileAndPath;
+                    }
                 }
             }
             return null;

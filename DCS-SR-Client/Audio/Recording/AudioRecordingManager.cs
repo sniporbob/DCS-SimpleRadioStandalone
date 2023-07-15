@@ -14,6 +14,8 @@ using Ciribob.DCS.SimpleRadio.Standalone.Common.Network;
 using Ciribob.DCS.SimpleRadio.Standalone.Common.Setting;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
+using System.IO;
+using System.Diagnostics;
 
 namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Recording
 {
@@ -25,36 +27,42 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Recording
 
         private ClientEffectsPipeline pipeline = new ClientEffectsPipeline();
 
-        private readonly int _sampleRate;
-        private readonly List<CircularFloatBuffer> _clientMixDownQueue;
-        private readonly List<CircularFloatBuffer> _playerMixDownQueue;
-        private readonly List<CircularFloatBuffer> _finalMixDownQueue;
+        private const int MAX_BUFFER_SECONDS = 3;
+        // TODO: should this be something more dynamic or in a more global scope?
+        private const int MAX_RADIOS = 11;
 
-        private static readonly int MAX_BUFFER_SECONDS = 3;
+        // TODO: drop in favor of AudioManager.OUTPUT_SAMPLE_RATE
+        private readonly int _sampleRate;
+        private readonly int _maxSamples;
+
+        // raw queues carry per-radio dehydrated audio samples.
+        private readonly List<CircularFloatBuffer> _clientRawQueues;
+        private readonly List<CircularFloatBuffer> _playerRawQueues;
+
+        // full queues carry per-radio hydrated audio samples reconstructed from the raw data.
+        private readonly List<AudioRecordingStreamHydrated> _clientFullQueues;
+        private readonly List<AudioRecordingStreamHydrated> _playerFullQueues;
+        private readonly List<AudioRecordingStream> _radioFullQueues;
+
+        private AudioRecordingLameWriter _audioRecordingWriter = null;
 
         private bool _stop;
-        private AudioRecordingLameWriterBase _audioRecordingWriter;
+        private bool _processThreadDone;
 
         private ConnectedClientsSingleton _connectedClientsSingleton = ConnectedClientsSingleton.Instance;
-        //private WaveFileWriter waveWriter;
 
         private AudioRecordingManager()
         {
-            _sampleRate = 48000;
+            _sampleRate = AudioManager.OUTPUT_SAMPLE_RATE;
+            _maxSamples = _sampleRate * MAX_BUFFER_SECONDS;
         
             _stop = true;
 
-            _clientMixDownQueue = new List<CircularFloatBuffer>();
-            _playerMixDownQueue = new List<CircularFloatBuffer>();
-            _finalMixDownQueue = new List<CircularFloatBuffer>();
-            //TODO change that hardcoded 11 to run off number of radios
-            for (int i = 0; i < 11; i++)
-            {
-                // seconds of audio
-                _clientMixDownQueue.Add(new CircularFloatBuffer(AudioManager.OUTPUT_SAMPLE_RATE* MAX_BUFFER_SECONDS));
-                _playerMixDownQueue.Add(new CircularFloatBuffer(AudioManager.OUTPUT_SAMPLE_RATE * MAX_BUFFER_SECONDS));
-                _finalMixDownQueue.Add(new CircularFloatBuffer(AudioManager.OUTPUT_SAMPLE_RATE * MAX_BUFFER_SECONDS));
-            }
+            _clientRawQueues = new List<CircularFloatBuffer>();
+            _playerRawQueues = new List<CircularFloatBuffer>();
+            _clientFullQueues = new List<AudioRecordingStreamHydrated>();
+            _playerFullQueues = new List<AudioRecordingStreamHydrated>();
+            _radioFullQueues = new List<AudioRecordingStream>();
         }
 
         public static AudioRecordingManager Instance
@@ -75,51 +83,116 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Recording
 
         private void ProcessQueues()
         {
-            while (!_stop)
+            Stopwatch timer = new Stopwatch();
+            long tickTime;
+
+            bool isRecording = false;
+
+            float[] clientBuffer = new float[_maxSamples];
+            float[] playerBuffer = new float[_maxSamples];
+
+            _processThreadDone = false;
+
+            timer.Start();
+
+            // wait until we have some audio to record. avoids a bunch of dead air at recording start.
+            while (!_stop && !isRecording)
             {
+                tickTime = timer.ElapsedMilliseconds;
+
                 Thread.Sleep(500);
 
-                //leave the thread running but paused if you dont opt in to recording
-                if (!GlobalSettingsStore.Instance.GetClientSettingBool(GlobalSettingsKeys.RecordAudio))
+                // if we're recording audio, check to see if any mixdown queue has data. if so,
+                // start recording. if we're not recording, just run this thread doing nothing.
+                for (int i = 0; i < MAX_RADIOS; i++)
                 {
-                    continue;
+                    if ((_playerRawQueues[i].Count > 0) || (_clientRawQueues[i].Count > 0))
+                    {
+                        for (int j = 0; j < MAX_RADIOS; j++)
+                        {
+                            _clientFullQueues[j].StartRecording(tickTime);
+                            _playerFullQueues[j].StartRecording(tickTime);
+                        }
+                        isRecording = true;
+                        break;
+                    }
                 }
                 
+            }
+            _logger.Info("Transmission recording started.");
+
+            // record audio. pull samples from the raw queues and hydrate them in the full queues.
+            // once we've swept through all the queues, update the output file(s) as necessary.
+            // the processing occurs at a beat rate, or tick, of ~500ms. in each tick, we pull all
+            // samples that have arrived from the user of the manager, inject dead air as needed,
+            // and stream available audio to the recording files.
+            //
+            // the algorithm assumes that, to first order, the dead air is reflected in intervals
+            // between writes to the raw queues (by AppendPlayerAudio() and AppendClientAudio()
+            // methods). that is, raw queue writes for clips separated by, say, 2s of dead air will
+            // be roughly 2s apart. this should naturally happen as long as the rest of the client
+            // is providing audio as it occurs and not buffering.
+            //
+            // this assumption can be lifted by tracking more detailed timing information on when
+            // groups of samples in the queue appear in the "real" audio stream in addition to the
+            // samples themselves.
+            while (!_stop && isRecording)
+            {
                 try
                 {
-                    //mix two queues
-
-                    //we now have mixdown audio per queue
-                    //it'll always be off by 500  milliseconds though - as this is a lazy way of mixing
-
-                    //two seconds of buffer - but runs every 500 milliseconds
-                    float[] clientBuffer = new float[AudioManager.OUTPUT_SAMPLE_RATE * 2];
-                    float[] playerBuffer = new float[AudioManager.OUTPUT_SAMPLE_RATE * 2];
-                    for (var i = 0; i < _finalMixDownQueue.Count; i++)
+                    tickTime = timer.ElapsedMilliseconds;
+                    for (int i = 0; i < MAX_RADIOS; i++)
                     {
-                        //find longest queue
-                        int playerAudioLength = _playerMixDownQueue[i].Count;
-                        int clientAudioLength = _clientMixDownQueue[i].Count;
+                        int playerAudioLength = _playerRawQueues[i].Read(playerBuffer, 0, playerBuffer.Length);
+                        _playerFullQueues[i].WriteRawSamples(tickTime, playerBuffer, playerAudioLength);
 
-
-                        _playerMixDownQueue[i].Read(playerBuffer, 0, playerAudioLength);
-                        _clientMixDownQueue[i].Read(clientBuffer, 0, clientAudioLength);
-
-                        float[] mixDown = AudioManipulationHelper.MixArraysClipped(playerBuffer, playerAudioLength, clientBuffer,
-                            clientAudioLength, out int count);
-
-                        _finalMixDownQueue[i].Write(mixDown, 0, count);
+                        int clientAudioLength = _clientRawQueues[i].Read(clientBuffer, 0, clientBuffer.Length);
+                        _clientFullQueues[i].WriteRawSamples(tickTime, clientBuffer, clientAudioLength);
                     }
-
-                    _audioRecordingWriter.ProcessAudio(_finalMixDownQueue);
+                    _audioRecordingWriter.ProcessAudio();
                 }
                 catch (Exception ex)
                 {
                     _logger.Error($"Recording process failed: {ex}");
                 }
+
+                Thread.Sleep(500);
             }
 
+            _logger.Info("Transmission recording ended, draining audio.");
+
+            // drain audio. will spin for a bit to let everyone catch their breath. _stop should
+            // prevent any additional samples from coming in. pad out all the full queues to have
+            // the same number of samples. the shutdown of _audioRecordingWriter will drain this
+            // to any recording files.
+
+            Thread.Sleep(500);
+
+            int maxSamples = int.MinValue;
+            int minSamples = int.MaxValue;
+            for (int i = 0; i < MAX_RADIOS; i++)
+            {
+                int samples = _playerFullQueues[i].Count();
+                maxSamples = Math.Max(maxSamples, samples);
+                minSamples = Math.Min(minSamples, samples);
+
+                samples = _clientFullQueues[i].Count();
+                maxSamples = Math.Max(maxSamples, samples);
+                minSamples = Math.Min(minSamples, samples);
+            }
+
+            float[] fillBuf = new float[maxSamples - minSamples];
+            for (int i = 0; i < MAX_RADIOS; i++)
+            {
+                _playerFullQueues[i].Write(fillBuf, maxSamples - _playerFullQueues[i].Count());
+                _clientFullQueues[i].Write(fillBuf, maxSamples - _clientFullQueues[i].Count());
+            }
+
+            timer.Stop();
+
             _logger.Info("Stop recording thread");
+
+            _processThreadDone = true;
         }
 
         private float[] SingleRadioMixDown(List<DeJitteredTransmission> mainAudio, List<DeJitteredTransmission> secondaryAudio, int radio, out int count)
@@ -162,44 +235,84 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Recording
 
         public void Start()
         {
-            _logger.Info("Transmission recording started.");
+            if (!GlobalSettingsStore.Instance.GetClientSettingBool(GlobalSettingsKeys.RecordAudio))
+            {
+                _processThreadDone = true;
+                _logger.Info("Transmission recording disabled");
+                return;
+            }
 
+            _logger.Info("Transmission recording waiting for audio.");
+
+            // clear out existing queue lists and rebuild them from scratch. queues include
+            // dehydrated (w/o dead air) and hydrated (w/ dead air) per-radio sample queues for
+            // client and player sources. also, set up a mixer to combine player and client
+            // sources into a per-radio audio stream.
+
+            _clientRawQueues.Clear();
+            _playerRawQueues.Clear();
+            _clientFullQueues.Clear();
+            _playerFullQueues.Clear();
+            _radioFullQueues.Clear();
+
+            for (int i = 0; i < MAX_RADIOS; i++)
+            {
+                _clientRawQueues.Add(new CircularFloatBuffer(_maxSamples));
+                _playerRawQueues.Add(new CircularFloatBuffer(_maxSamples));
+
+                _clientFullQueues.Add(new AudioRecordingStreamHydrated(_maxSamples, $"{i}.c"));
+                _playerFullQueues.Add(new AudioRecordingStreamHydrated(_maxSamples, $"{i}.p"));
+
+                List<AudioRecordingStream> streams = new List<AudioRecordingStream>
+                {
+                    _clientFullQueues[i],
+                    _playerFullQueues[i]
+                };
+                _radioFullQueues.Add(new AudioRecordingStreamMixer(streams, $"-Radio-{i}"));
+            }
+
+            // setup the recording writer to emit a single file that contains a mix of all radios
+            // or multiple files that contains per radio traffic. stop any existing writer first.
+ 
             _audioRecordingWriter?.Stop();
 
-            if(GlobalSettingsStore.Instance.GetClientSettingBool(GlobalSettingsKeys.SingleFileMixdown))
+            if (GlobalSettingsStore.Instance.GetClientSettingBool(GlobalSettingsKeys.SingleFileMixdown))
             {
-                _audioRecordingWriter = new MixDownLameRecordingWriter(_sampleRate);
+                // write single mixed file. create a writer with a single stream source: a mixer
+                // that combines all per-radio streams.
+
+                List<AudioRecordingStream> streams = new List<AudioRecordingStream>
+                {
+                   new AudioRecordingStreamMixer(_radioFullQueues, "-All")
+                };
+                _audioRecordingWriter = new AudioRecordingLameWriter(streams, _sampleRate, _maxSamples);
             }
             else
             {
-                _audioRecordingWriter = new PerRadioLameRecordingWriter(_sampleRate);
+                // write per-radio audio files. create a write with N streams, one for each of the
+                // radios.
+
+                _audioRecordingWriter = new AudioRecordingLameWriter(_radioFullQueues, _sampleRate, _maxSamples);
             }
-         
+
             _stop = false;
-
-            _clientMixDownQueue.Clear();
-            _playerMixDownQueue.Clear();
-            _finalMixDownQueue.Clear();
-
-            for (int i = 0; i < 11; i++)
-            {
-                //TODO check size
-                //5 seconds of audio
-                _clientMixDownQueue.Add(new CircularFloatBuffer(AudioManager.OUTPUT_SAMPLE_RATE * MAX_BUFFER_SECONDS));
-                _playerMixDownQueue.Add(new CircularFloatBuffer(AudioManager.OUTPUT_SAMPLE_RATE * MAX_BUFFER_SECONDS));
-                _finalMixDownQueue.Add(new CircularFloatBuffer(AudioManager.OUTPUT_SAMPLE_RATE * MAX_BUFFER_SECONDS));
-            }
+            _processThreadDone = false;
 
             new Thread(ProcessQueues).Start();
         }
 
         public void Stop()
         {
-            if (_stop) { return; }
-            _stop = true;
-            _audioRecordingWriter?.Stop();
-            _audioRecordingWriter = null;
-            _logger.Info("Transmission recording stopped.");
+            if (!_stop) {
+                _stop = true;
+                for (int i = 0; !_processThreadDone && (i < 10); i++)
+                {
+                    Thread.Sleep(200);
+                }
+                _audioRecordingWriter?.Stop();
+                _audioRecordingWriter = null;
+                _logger.Info("Transmission recording stopped.");
+            }
         }
 
         public void AppendPlayerAudio(float[] transmission, int radioId)
@@ -207,7 +320,7 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Recording
             //only record if we need too
             if (GlobalSettingsStore.Instance.GetClientSettingBool(GlobalSettingsKeys.RecordAudio) && !_stop)
             {
-                _playerMixDownQueue[radioId]?.Write(transmission, 0, transmission.Length);
+                _playerRawQueues[radioId]?.Write(transmission, 0, transmission.Length);
             }
         }
 
@@ -216,17 +329,13 @@ namespace Ciribob.DCS.SimpleRadio.Standalone.Client.Recording
             //only record if we need too
             if (GlobalSettingsStore.Instance.GetClientSettingBool(GlobalSettingsKeys.RecordAudio) && !_stop)
             {
-                //TODO
-                //represents a moment in time
-                //should I include time so we can line up correctly?
-
                 mainAudio = FilterTransmisions(mainAudio);
                 secondaryAudio = FilterTransmisions(secondaryAudio);
 
                 float[] buf = SingleRadioMixDown( mainAudio,secondaryAudio,radioId, out int count);
                 if (count > 0)
                 {
-                    _clientMixDownQueue[radioId].Write(buf, 0, count);
+                    _clientRawQueues[radioId].Write(buf, 0, count);
                 }
             }
         }

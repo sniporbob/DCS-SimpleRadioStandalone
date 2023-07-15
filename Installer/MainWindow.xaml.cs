@@ -32,7 +32,7 @@ namespace Installer
     public partial class MainWindow
     {
         private const string REG_PATH = "HKEY_CURRENT_USER\\SOFTWARE\\DCS-SR-Standalone";
-        private const string EXPORT_SRS_LUA = "pcall(function() local dcsSr=require('lfs');dofile(dcsSr.writedir()..[[Mods\\Services\\DCS-SRS\\Scripts\\DCS-SimpleRadioStandalone.lua]]); end,nil);";
+        private const string EXPORT_SRS_LUA = "pcall(function() local dcsSr=require('lfs');dofile(dcsSr.writedir()..[[Mods\\Services\\DCS-SRS\\Scripts\\DCS-SimpleRadioStandalone.lua]]); end,nil)";
         private readonly string _currentDirectory;
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private ProgressBarDialog _progressBarDialog = null;
