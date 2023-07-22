@@ -83,6 +83,22 @@ srsOverlay.module_specific["M-2000C"] = function(radios)
 	end
 
 
+srsOverlay.module_specific["UH-60L"] = function(radios) -- for ARC-201 scanning feature, detects RX-ing
+		for _i,_radio in pairs(radios) do
+			local _isReceiving,_sentBy = srsOverlay.isReceiving(_i)
+			if _i==2 then -- ARC-201 FM1
+				if _isReceiving>0 then
+					base.Export.GetDevice(2):performClickableAction(20101, 1)
+				end
+			elseif _i==5 then -- ARC-201 FM2
+				if _isReceiving>0 then
+					base.Export.GetDevice(9):performClickableAction(20102, 1)
+				end
+			end
+		end
+	end
+
+
 function srsOverlay.loadConfiguration()
     srsOverlay.log("Loading config file...")
     local tbl = Tools.safeDoFile(lfs.writedir() .. 'Config/SRSConfig.lua', false)
